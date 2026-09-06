@@ -22,6 +22,13 @@ app="dist/SMPTE History.app/Contents"
 xcrun lipo -create build/arm64/SMPTEHistory build/x86_64/SMPTEHistory -output "$app/MacOS/SMPTEHistory"
 xcrun lipo -create build/arm64/libltc.dylib build/x86_64/libltc.dylib -output "$app/Frameworks/libltc.dylib"
 cp Info.plist "$app/Info.plist"
+mkdir -p build/AppIcon.iconset
+for size in 16 32 128 256 512; do
+    sips -z "$size" "$size" Assets/AppIcon.png --out "build/AppIcon.iconset/icon_${size}x${size}.png" >/dev/null
+    double=$((size * 2))
+    sips -z "$double" "$double" Assets/AppIcon.png --out "build/AppIcon.iconset/icon_${size}x${size}@2x.png" >/dev/null
+done
+iconutil -c icns build/AppIcon.iconset -o "$app/Resources/AppIcon.icns"
 cp vendor/libltc/COPYING "$app/Resources/libltc-COPYING.txt"
 codesign --force --sign - "$app/Frameworks/libltc.dylib"
 codesign --force --sign - "dist/SMPTE History.app"

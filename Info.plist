@@ -4,10 +4,11 @@
 <key>CFBundleExecutable</key><string>SMPTEHistory</string>
 <key>CFBundleIdentifier</key><string>pl.stageutils.smptehistory</string>
 <key>CFBundleName</key><string>SMPTE History</string>
+<key>CFBundleIconFile</key><string>AppIcon</string>
 <key>CFBundleDisplayName</key><string>SMPTE History</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>1.0.1</string>
-<key>CFBundleVersion</key><string>2</string>
+<key>CFBundleShortVersionString</key><string>1.0.2</string>
+<key>CFBundleVersion</key><string>3</string>
 <key>LSMinimumSystemVersion</key><string>13.0</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>NSMicrophoneUsageDescription</key><string>Monitor odczytuje wybrany kanał audio LTC po naciśnięciu Start, aby pokazać historię SMPTE. Nie zapisuje ani nie wysyła dźwięku.</string>
