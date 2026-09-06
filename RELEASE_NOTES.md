@@ -7,7 +7,9 @@ Dodano podpis „Developed by Black Light Design” w stopce aplikacji.
 - Tryb demonstracyjny bez dostępu do wejścia audio.
 - macOS 13+, Apple Silicon i Intel (Universal Binary).
 
-Pobierz archiwum `SMPTE-History-macOS.zip`, rozpakuj je i otwórz `SMPTE-History/dist/SMPTE History.app`. Pełna instrukcja i kod źródłowy znajdują się w archiwum oraz repozytorium.
+**Najprostsza instalacja:** pobierz `SMPTE-History-1.0.1.dmg`, otwórz go i przeciągnij `SMPTE History.app` na skrót `Applications`. Uruchom aplikację z folderu Aplikacje. Wszystkie potrzebne biblioteki są już w środku.
+
+Alternatywnie pobierz archiwum `SMPTE-History-macOS.zip`, rozpakuj je i otwórz `SMPTE-History/dist/SMPTE History.app`. Pełna instrukcja i kod źródłowy znajdują się w archiwum oraz repozytorium. Plik `.dmg.sha256` zawiera sumę kontrolną obrazu DMG.
 
 Aplikacja jest podpisana lokalnie ad hoc, bez notaryzacji Apple. Jest osobnym monitorem sygnału audio, nie wtyczką FFGL. Mierzone FPS nie są odczytem ustawienia Areny. Przed użyciem podczas wydarzenia sprawdź współdzielenie wejścia audio i odbiór LTC na docelowym sprzęcie.
 

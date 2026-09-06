@@ -4,7 +4,7 @@ Natywny monitor wejściowego LTC/SMPTE do pracy obok Resolume Arena. Pokazuje ti
 
 ## Uruchomienie
 
-1. Otwórz **dist/SMPTE History.app**. Możesz skopiować aplikację do swojego folderu Aplikacje. Wymaga macOS 13 lub nowszego; zawiera wersje Apple Silicon i Intel.
+1. Pobierz plik **SMPTE-History-1.0.1.dmg** z [Releases](https://github.com/in4you-jc/SMPTE-History/releases/latest), otwórz go i przeciągnij **SMPTE History.app** na skrót **Applications**. Następnie uruchom aplikację z folderu Aplikacje. Nie potrzebujesz kodu źródłowego, Pythona ani dodatkowych bibliotek. Wymaga macOS 13 lub nowszego; zawiera wersje Apple Silicon i Intel. Alternatywnie w archiwum ZIP znajdziesz aplikację w `dist/SMPTE History.app`.
 2. W Arenie sprawdź **Preferences → Audio → SMPTE**: urządzenie i numer kanału używanego przez SMPTE 1 lub SMPTE 2.
 3. W monitorze wybierz **to samo urządzenie oraz ten sam kanał**. Kanały są numerowane od 1. „Odśwież” odczytuje ponownie listę urządzeń.
 4. Pozostaw próg zaniku **120 ms** lub wybierz 80/200/500 ms. Kliknij **Start · nowy zapis**. Przy pierwszym uruchomieniu macOS poprosi o dostęp do mikrofonu — to uprawnienie obejmuje również wejścia interfejsów audio.
@@ -61,6 +61,7 @@ Wymagane Apple Command Line Tools / Xcode. Zależność libltc 1.3.2 jest dołą
 ```sh
 bash build.sh
 bash test.sh
+bash package-dmg.sh
 ```
 
 `build.sh` tworzy uniwersalną aplikację i podpisuje ją lokalnie ad hoc. Nie jest to podpis Developer ID ani notaryzacja Apple. Gdy przeniesiona na inny Mac aplikacja zostanie zablokowana, użyj systemowej opcji „Otwórz mimo to” w Prywatność i ochrona albo zbuduj aplikację ze źródeł. Nie trzeba wyłączać Gatekeepera.
