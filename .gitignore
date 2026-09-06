@@ -1,0 +1,7 @@
+/build/
+/dist/
+.DS_Store
+*.xcuserstate
+.env
+.env.*
+!.env.example
