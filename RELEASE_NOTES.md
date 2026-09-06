@@ -1,6 +1,6 @@
-# SMPTE History 1.0.0
+# SMPTE History 1.0.1
 
-Pierwsze wydanie niezależnego monitora LTC/SMPTE dla macOS, do pracy obok Resolume Arena.
+Dodano podpis „Developed by Black Light Design” w stopce aplikacji.
 
 - Przesuwające się okno ostatnich 10 sekund: timecode, mierzone FPS i przerwy w odbiorze poprawnych ramek.
 - Wybór urządzenia audio i kanału, ręczny Start/Stop, eksport CSV.

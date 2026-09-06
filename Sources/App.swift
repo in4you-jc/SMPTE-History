@@ -296,8 +296,12 @@ struct ContentView: View {
     }
 
     @ViewBuilder private var footnote: some View {
+        VStack(alignment: .leading, spacing: 6) {
             Text("Pomiar niezależny od dekodera Areny. FPS z długości ramek audio; DF/NDF z sygnału. Zanik = brak poprawnej ramki przez wybrany próg. Czas przerwy jest przybliżony.")
                 .font(.system(size: 11)).foregroundColor(.secondary).fixedSize(horizontal: false, vertical: true)
+            Text("Developed by Black Light Design")
+                .font(.system(size: 11, weight: .medium)).foregroundColor(.secondary)
+        }
     }
 
     func metric(_ label: String, value: String, width: CGFloat) -> some View {
