@@ -21,6 +21,12 @@ struct SHCapture {
     pthread_mutex_t lock;
     atomic_int running, overflows, error;
     double last_audio;
+    AudioUnit duplex;
+    float *input_scratch;
+    UInt32 max_frames;
+    int outputs;
+    _Atomic(float) *gains;
+    AudioDeviceID route_device;
 };
 
 double sh_now(void) {
@@ -30,6 +36,17 @@ static int property(AudioObjectID id, AudioObjectPropertySelector selector,
                     AudioObjectPropertyScope scope, void *out, UInt32 *size) {
     AudioObjectPropertyAddress a = {selector, scope, kAudioObjectPropertyElementMain};
     return AudioObjectGetPropertyData(id, &a, 0, NULL, size, out);
+}
+static int channel_count(AudioDeviceID id, AudioObjectPropertyScope scope) {
+    AudioObjectPropertyAddress a = {kAudioDevicePropertyStreamConfiguration, scope, kAudioObjectPropertyElementMain};
+    UInt32 bytes = 0;
+    if (AudioObjectGetPropertyDataSize(id, &a, 0, NULL, &bytes) || bytes < sizeof(AudioBufferList)) return 0;
+    AudioBufferList *list = malloc(bytes);
+    if (!list) return 0;
+    int count = 0;
+    if (!AudioObjectGetPropertyData(id, &a, 0, NULL, &bytes, list))
+        for (UInt32 i = 0; i < list->mNumberBuffers; i++) count += list->mBuffers[i].mNumberChannels;
+    free(list); return count;
 }
 int sh_devices(SHDevice *out, int capacity) {
     AudioObjectPropertyAddress a = {kAudioHardwarePropertyDevices,
@@ -55,6 +72,7 @@ int sh_devices(SHDevice *out, int capacity) {
         free(list);
         if (!channels) continue;
         SHDevice d = {0}; d.id = ids[i]; d.channels = channels;
+        d.outputs = channel_count(ids[i], kAudioObjectPropertyScopeOutput);
         UInt32 n = sizeof(double);
         if (property(ids[i], kAudioDevicePropertyNominalSampleRate,
                      kAudioObjectPropertyScopeGlobal, &d.sample_rate, &n)) continue;
@@ -154,6 +172,13 @@ int sh_start(SHCapture *s, const char *uid) {
 void sh_stop(SHCapture *s) {
     if (!s) return;
     atomic_store(&s->running, 0);
+    if (s->duplex) {
+        AudioOutputUnitStop(s->duplex);
+        AudioUnitUninitialize(s->duplex);
+        AudioComponentInstanceDispose(s->duplex);
+        s->duplex = NULL;
+    }
+    free(s->input_scratch); s->input_scratch = NULL;
     if (s->queue) {
         AudioQueueStop(s->queue, true);
         AudioQueueDispose(s->queue, true);
@@ -162,7 +187,7 @@ void sh_stop(SHCapture *s) {
 }
 void sh_destroy(SHCapture *s) {
     if (!s) return;
-    sh_stop(s); ltc_decoder_free(s->decoder); pthread_mutex_destroy(&s->lock); free(s);
+    sh_stop(s); free(s->gains); ltc_decoder_free(s->decoder); pthread_mutex_destroy(&s->lock); free(s);
 }
 int sh_read(SHCapture *s, SHFrame *out, int capacity) {
     int n = 0;
@@ -174,4 +199,123 @@ int sh_overflows(SHCapture *s) { return atomic_load(&s->overflows); }
 int sh_error(SHCapture *s) { return atomic_load(&s->error); }
 double sh_last_audio(SHCapture *s) {
     pthread_mutex_lock(&s->lock); double t = s->last_audio; pthread_mutex_unlock(&s->lock); return t;
+}
+
+int sh_configure_outputs(SHCapture *s, int count) {
+    if (!s || atomic_load(&s->running) || count < 1) return -50;
+    _Atomic(float) *gains = calloc((size_t)count, sizeof(*gains));
+    if (!gains) return -108;
+    for (int i = 0; i < count; i++) atomic_init(&gains[i], 0.0f);
+    free(s->gains); s->gains = gains; s->outputs = count;
+    return 0;
+}
+void sh_set_output_gain(SHCapture *s, int channel, float gain) {
+    if (!s || channel < 0 || channel >= s->outputs) return;
+    if (!isfinite(gain)) gain = 0;
+    atomic_store_explicit(&s->gains[channel], fminf(1, fmaxf(0, gain)), memory_order_relaxed);
+}
+void sh_mix_outputs(SHCapture *s, const float *input, float *output, int frames) {
+    // Physical channel order, not a stereo/downmix layout. A muted output is
+    // exactly zero. No allocations, timecode synthesis or UI dependency here.
+    for (int ch = 0; ch < s->outputs; ch++) {
+        const float gain = atomic_load_explicit(&s->gains[ch], memory_order_relaxed);
+        for (int i = 0; i < frames; i++) {
+            float value = input[i * s->channels + s->channel];
+            if (!isfinite(value)) value = 0;
+            output[i * s->outputs + ch] = fmaxf(-1, fminf(1, value)) * gain;
+        }
+    }
+}
+static OSStatus duplex_render(void *user, AudioUnitRenderActionFlags *flags,
+    const AudioTimeStamp *stamp, UInt32 bus, UInt32 frames, AudioBufferList *out) {
+    SHCapture *s = user;
+    for (UInt32 b = 0; b < out->mNumberBuffers; b++)
+        if (out->mBuffers[b].mData) memset(out->mBuffers[b].mData, 0, out->mBuffers[b].mDataByteSize);
+    if (!atomic_load(&s->running) || atomic_load(&s->error)) return noErr;
+    if (frames > s->max_frames || out->mNumberBuffers != 1 ||
+        out->mBuffers[0].mNumberChannels != (UInt32)s->outputs ||
+        !out->mBuffers[0].mData || out->mBuffers[0].mDataByteSize < frames * sizeof(float) * s->outputs) {
+        atomic_store(&s->error, kAudioUnitErr_FormatNotSupported); return noErr;
+    }
+    AudioBufferList input = {.mNumberBuffers = 1};
+    input.mBuffers[0] = (AudioBuffer){.mNumberChannels = s->channels,
+        .mDataByteSize = frames * sizeof(float) * s->channels, .mData = s->input_scratch};
+    AudioUnitRenderActionFlags input_flags = 0;
+    OSStatus err = AudioUnitRender(s->duplex, &input_flags, stamp, 1, frames, &input);
+    if (err) { atomic_store(&s->error, err); return noErr; }
+    if (input_flags & kAudioUnitRenderAction_OutputIsSilence)
+        memset(s->input_scratch, 0, frames * sizeof(float) * s->channels);
+    sh_mix_outputs(s, s->input_scratch, out->mBuffers[0].mData, frames);
+    *flags &= ~kAudioUnitRenderAction_OutputIsSilence;
+    double start = sh_now() - frames / s->rate;
+    if (stamp->mFlags & kAudioTimeStampHostTimeValid)
+        start = (double)AudioConvertHostTimeToNanos(stamp->mHostTime) / 1e9;
+    sh_feed(s, s->input_scratch, frames, start);
+    return noErr;
+}
+int sh_start_duplex(SHCapture *s, uint32_t device_id) {
+    if (!s || !s->outputs || s->duplex || s->queue) return -50;
+    // Recheck topology before opening. Never silently fall back to speakers.
+    if (channel_count(device_id, kAudioObjectPropertyScopeInput) != s->channels ||
+        channel_count(device_id, kAudioObjectPropertyScopeOutput) != s->outputs) return -50;
+    s->route_device = device_id;
+    AudioComponentDescription desc = {.componentType = kAudioUnitType_Output,
+        .componentSubType = kAudioUnitSubType_HALOutput, .componentManufacturer = kAudioUnitManufacturer_Apple};
+    AudioComponent component = AudioComponentFindNext(NULL, &desc);
+    if (!component) return kAudioUnitErr_FailedInitialization;
+    OSStatus err = AudioComponentInstanceNew(component, &s->duplex);
+    if (err) return err;
+    UInt32 enabled = 1;
+#define SET(prop, scope, bus, ptr, size) do { \
+    err = AudioUnitSetProperty(s->duplex, prop, scope, bus, ptr, size); \
+    if (err) goto failed; \
+} while (0)
+    SET(kAudioOutputUnitProperty_EnableIO, kAudioUnitScope_Input, 1, &enabled, sizeof(enabled));
+    SET(kAudioOutputUnitProperty_EnableIO, kAudioUnitScope_Output, 0, &enabled, sizeof(enabled));
+    SET(kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &device_id, sizeof(device_id));
+    AudioStreamBasicDescription fmt = {.mSampleRate = s->rate, .mFormatID = kAudioFormatLinearPCM,
+        .mFormatFlags = kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked,
+        .mBitsPerChannel = 32, .mFramesPerPacket = 1, .mChannelsPerFrame = s->channels,
+        .mBytesPerFrame = 4 * s->channels, .mBytesPerPacket = 4 * s->channels};
+    SET(kAudioUnitProperty_StreamFormat, kAudioUnitScope_Output, 1, &fmt, sizeof(fmt));
+    fmt.mChannelsPerFrame = s->outputs; fmt.mBytesPerFrame = fmt.mBytesPerPacket = 4 * s->outputs;
+    SET(kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, 0, &fmt, sizeof(fmt));
+    // Explicit identity output map: do not let CoreAudio apply speaker mixing.
+    SInt32 *map = malloc(sizeof(SInt32) * s->outputs);
+    if (!map) { err = -108; goto failed; }
+    for (int i = 0; i < s->outputs; i++) map[i] = i;
+    err = AudioUnitSetProperty(s->duplex, kAudioOutputUnitProperty_ChannelMap,
+        kAudioUnitScope_Input, 0, map, sizeof(SInt32) * s->outputs);
+    free(map); if (err) goto failed;
+    s->max_frames = 4096;
+    SET(kAudioUnitProperty_MaximumFramesPerSlice, kAudioUnitScope_Global, 0, &s->max_frames, sizeof(s->max_frames));
+    UInt32 size = sizeof(s->max_frames);
+    err = AudioUnitGetProperty(s->duplex, kAudioUnitProperty_MaximumFramesPerSlice,
+        kAudioUnitScope_Global, 0, &s->max_frames, &size);
+    if (err) goto failed;
+    s->input_scratch = calloc((size_t)s->max_frames * s->channels, sizeof(float));
+    if (!s->input_scratch) { err = -108; goto failed; }
+    AURenderCallbackStruct cb = {.inputProc = duplex_render, .inputProcRefCon = s};
+    SET(kAudioUnitProperty_SetRenderCallback, kAudioUnitScope_Input, 0, &cb, sizeof(cb));
+    err = AudioUnitInitialize(s->duplex); if (err) goto failed;
+    atomic_store(&s->running, 1);
+    err = AudioOutputUnitStart(s->duplex); if (err) goto failed;
+    return noErr;
+failed:
+    sh_stop(s); return err;
+#undef SET
+}
+int sh_validate_device(SHCapture *s) {
+    if (!s || !s->duplex) return 0;
+    UInt32 alive = 0, size = sizeof(alive);
+    double rate = 0;
+    int bad = property(s->route_device, kAudioDevicePropertyDeviceIsAlive,
+        kAudioObjectPropertyScopeGlobal, &alive, &size) || !alive;
+    size = sizeof(rate);
+    bad |= property(s->route_device, kAudioDevicePropertyNominalSampleRate,
+        kAudioObjectPropertyScopeGlobal, &rate, &size) || fabs(rate - s->rate) > 0.01;
+    bad |= channel_count(s->route_device, kAudioObjectPropertyScopeInput) != s->channels;
+    bad |= channel_count(s->route_device, kAudioObjectPropertyScopeOutput) != s->outputs;
+    if (bad) atomic_store(&s->error, kAudioHardwareBadDeviceError);
+    return bad;
 }

@@ -1,18 +1,18 @@
 # SMPTE History — macOS
 
-Natywny monitor wejściowego LTC/SMPTE do pracy obok Resolume Arena. Pokazuje timecode, mierzone FPS oraz przerwy w odbiorze poprawnych ramek z ostatnich 10 sekund. Ręczny Start/Stop, przegląd każdej ramki i eksport CSV.
+Natywny monitor wejściowego LTC/SMPTE do pracy obok Resolume Arena. Pokazuje timecode, mierzone FPS oraz przerwy w odbiorze poprawnych ramek z ostatnich 10 sekund. Ciągły odbiór, rozdzielanie LTC na wyjścia tej samej karty, niezależne poziomy kanałów, zamrażanie historii i eksport CSV.
 
 ## Uruchomienie
 
-**Instalator PKG:** w [Releases](https://github.com/in4you-jc/SMPTE-History/releases/latest) dostępny jest też `SMPTE-History-1.0.2.pkg`. Otwórz go i przejdź przez instalator macOS. Umieści aplikację w `/Applications/SMPTE History.app`; może poprosić o hasło administratora. Przed aktualizacją zamknij działającą aplikację. Instalator nie uruchamia aplikacji ani nasłuchu automatycznie. Pakiet nie ma podpisu Developer ID Installer ani notaryzacji Apple.
+**Instalator PKG:** w [Releases](https://github.com/in4you-jc/SMPTE-History/releases/latest) dostępny jest też `SMPTE-History-1.1.0.pkg`. Otwórz go i przejdź przez instalator macOS. Umieści aplikację w `/Applications/SMPTE History.app`; może poprosić o hasło administratora. Przed aktualizacją zamknij działającą aplikację. Instalator nie uruchamia aplikacji ani nasłuchu automatycznie. Pakiet nie ma podpisu Developer ID Installer ani notaryzacji Apple.
 
-1. Pobierz plik **SMPTE-History-1.0.2.dmg** z [Releases](https://github.com/in4you-jc/SMPTE-History/releases/latest), otwórz go i przeciągnij **SMPTE History.app** na skrót **Applications**. Następnie uruchom aplikację z folderu Aplikacje. Nie potrzebujesz kodu źródłowego, Pythona ani dodatkowych bibliotek. Wymaga macOS 13 lub nowszego; zawiera wersje Apple Silicon i Intel. Alternatywnie w archiwum ZIP znajdziesz aplikację w `dist/SMPTE History.app`.
+1. Pobierz plik **SMPTE-History-1.1.0.dmg** z [Releases](https://github.com/in4you-jc/SMPTE-History/releases/latest), otwórz go i przeciągnij **SMPTE History.app** na skrót **Applications**. Następnie uruchom aplikację z folderu Aplikacje. Nie potrzebujesz kodu źródłowego, Pythona ani dodatkowych bibliotek. Wymaga macOS 13 lub nowszego; zawiera wersje Apple Silicon i Intel. Alternatywnie w archiwum ZIP znajdziesz aplikację w `dist/SMPTE History.app`.
 2. W Arenie sprawdź **Preferences → Audio → SMPTE**: urządzenie i numer kanału używanego przez SMPTE 1 lub SMPTE 2.
 3. W monitorze wybierz **to samo urządzenie oraz ten sam kanał**. Kanały są numerowane od 1. „Odśwież” odczytuje ponownie listę urządzeń.
-4. Pozostaw próg zaniku **120 ms** lub wybierz 80/200/500 ms. Kliknij **Start · nowy zapis**. Przy pierwszym uruchomieniu macOS poprosi o dostęp do mikrofonu — to uprawnienie obejmuje również wejścia interfejsów audio.
-5. Po zdarzeniu kliknij **Stop · zachowaj historię**. Odbiór audio i timer odświeżania zostaną wyłączone. Możesz przejrzeć ramki i nacisnąć **Zapisz CSV**.
+4. Pozostaw próg zaniku **120 ms** lub wybierz 80/200/500 ms. Kliknij **Start · ciągły odbiór**. Przy pierwszym uruchomieniu macOS poprosi o dostęp do mikrofonu — to uprawnienie obejmuje również wejścia interfejsów audio.
+5. Po zdarzeniu kliknij **Zamroź historię**, aby zachować migawkę bez przerywania odbioru i wyjść. **Wróć do live** przywraca bieżącą historię. **Stop · wyłącz audio** zatrzymuje cały tor i zwalnia urządzenie. **Zapisz CSV** eksportuje widoczną historię (zamrożoną, jeśli aktywna).
 
-Start czyści poprzednią historię. Eksport podczas nasłuchu zapisuje migawkę z chwili naciśnięcia przycisku. Monitor nie może odzyskać danych sprzed włączenia. Zamknięcie okna kończy aplikację i zwalnia wejście audio.
+Start czyści poprzednią historię i migawkę. Odbiór działa bez limitu czasu do Stop lub zamknięcia aplikacji; 10 sekund to długość historii, nie limit pracy. Eksport podczas nasłuchu zapisuje migawkę z chwili naciśnięcia przycisku. Monitor nie może odzyskać danych sprzed włączenia. Zamknięcie okna kończy aplikację i zwalnia wejście audio.
 
 Przycisk **Pokaż demo** pokazuje oznaczoną symulację 25 FPS z przerwą; nie otwiera wejścia audio.
 
@@ -33,7 +33,22 @@ Dokumentacja REST API dołączona do Areny **7.23.2** (`rest/docs/swagger.yaml`)
 
 Urządzenie/sterownik musi pozwalać Arenie i monitorowi na jednoczesny odbiór. Aplikacja nie zmienia systemowego wejścia domyślnego ani nominalnej częstotliwości urządzenia. Gdy sterownik nie pozwala współdzielić wejścia, potrzebne będzie udostępnienie sygnału na drugim wejściu lub istniejący routing audio. Jednocześnie monitorowany jest jeden wybrany kanał.
 
-Brak dźwięku w głośnikach jest prawidłowy: monitor nie tworzy wyjścia audio. Używaj bezpośredniego kanału LTC, bez redukcji szumu, trybu izolacji głosu i innych procesorów. Sam napis „mikrofon” w uprawnieniach macOS nie oznacza, że należy używać mikrofonu laptopa.
+Gdy przekazywanie jest wyłączone, monitor nie otwiera wyjść audio. Używaj bezpośredniego kanału LTC, bez redukcji szumu, trybu izolacji głosu i innych procesorów. Sam napis „mikrofon” w uprawnieniach macOS nie oznacza, że należy używać mikrofonu laptopa.
+
+## Przekazywanie LTC na wyjścia
+
+1. Wybierz urządzenie CoreAudio mające wejścia i wyjścia oraz kanał wejściowy LTC.
+2. Otwórz zakładkę **Wyjścia karty**. Liczba wyjść jest odczytywana z konfiguracji strumieni urządzenia, nie ze stałej listy. Widoczne są także kanały cyfrowe/virtual, jeśli sterownik je udostępnia; nazwy OUT 1…N odpowiadają kolejności CoreAudio.
+3. Przed Start zaznacz **Przekazuj LTC na wyjścia tej karty**. Włącz potrzebne kanały OUT i ustaw ich poziomy 0–100%. 100% oznacza niezmienioną amplitudę wejściową (0 dB wzmocnienia programu); 50% to około −6 dB. Nie jest to zmiana sprzętowego potencjometru ani dBu na gnieździe.
+4. Kliknij **Start · ciągły odbiór**. Kanały i poziomy można zmieniać podczas działania, niezależnie od podglądu historii. **Wycisz wszystkie** zeruje wszystkie wyjścia bez zatrzymywania wejścia.
+
+Wyjścia domyślnie są wyłączone. Zmiana urządzenia lub liczby kanałów resetuje włączniki; konfiguracja wyjść nie jest automatycznie przywracana po ponownym uruchomieniu. Wyciszenie daje cyfrowe zero. Poziomy nie przekraczają 100%, a nieprawidłowe próbki są zerowane. Regulacja działa na blokach audio; zmiana poziomu podczas ramki może chwilowo zakłócić jej odczyt u odbiorcy.
+
+To przekazywanie **przebiegu audio**, bez ponownego generowania timecode, bez freewheel i bez usuwania zakłóceń. Cały dźwięk wybranego kanału jest kopiowany, także niepoprawny LTC lub inny dźwięk. Cisza na wejściu daje ciszę na wyjściach. Próg zaniku dotyczy tylko diagnostyki. Nie łącz wyjścia z powrotem na wejście LTC — w szczególności uważaj na wewnętrzny loopback interfejsu lub wirtualnego kabla.
+
+Wejście i wyjścia korzystają z **jednego urządzenia i jego zegara** poprzez AUHAL. Program nie zmienia domyślnego urządzenia systemu, zegara ani sample rate karty. Dwa niezależne urządzenia audio nie są obsługiwane przez ten tor; można użyć wcześniej skonfigurowanego urządzenia agregowanego CoreAudio, ale jego synchronizacja wymaga osobnej próby. Opóźnienie wynika z buforów i sterownika, nie z 10-sekundowej historii. Aplikacja nie mierzy ani nie kompensuje opóźnienia toru.
+
+Po wykryciu zmiany liczby kanałów, sample rate, odłączenia urządzenia lub błędu renderowania tor jest zatrzymywany. Program nie przełącza się sam na inne urządzenie. Minimizacja i zamrożenie historii nie zatrzymują pracy; zamknięcie aplikacji, uśpienie lub awaria komputera przerywają przekazywanie. Błąd urządzenia nie jest automatycznie wznawiany — po sprawdzeniu połączenia użyj Odśwież i Start.
 
 ## Obciążenie i dane
 
@@ -69,7 +84,7 @@ bash package-pkg.sh
 
 `build.sh` tworzy uniwersalną aplikację i podpisuje ją lokalnie ad hoc. Nie jest to podpis Developer ID ani notaryzacja Apple. Gdy przeniesiona na inny Mac aplikacja zostanie zablokowana, użyj systemowej opcji „Otwórz mimo to” w Prywatność i ochrona albo zbuduj aplikację ze źródeł. Nie trzeba wyłączać Gatekeepera.
 
-Testy automatyczne obejmują dekodowanie faktycznego przebiegu LTC generowanego przez libltc, wiele FPS, 44,1/48 kHz, odwróconą polaryzację, wybór kanału stereo, ciszę, powrót sygnału, szum oraz logikę historii i CSV. To testy programowe; nie zastępują testu fizycznego wejścia wraz z Areną. Demo interfejsu jest symulacją, a nie testem urządzenia.
+Testy automatyczne obejmują dekodowanie faktycznego przebiegu LTC generowanego przez libltc, wiele FPS, 44,1/48 kHz, odwróconą polaryzację, wybór kanału stereo, ciszę, powrót sygnału, szum oraz logikę historii i CSV. Testy routingu obejmują 128 kanałów, kolejność fizyczną, niezależne poziomy, mute i ponowne dekodowanie LTC po przejściu przez tor wyjściowy dla wszystkich testowanych FPS. To testy programowe; nie zastępują testu fizycznej karty, jej wyjść i odbiorników LTC wraz z Areną. Demo interfejsu jest symulacją, a nie testem urządzenia.
 
 ## Źródła i licencje
 

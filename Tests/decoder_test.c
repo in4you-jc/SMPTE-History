@@ -14,6 +14,11 @@ static void check_rate(double rate, double fps, int df, int invert) {
     ltc_encoder_set_timecode(enc, &tc);
     SHCapture *capture = sh_create(rate, 1, 2);
     SHCapture *wrong = sh_create(rate, 0, 2);
+    assert(sh_configure_outputs(capture, 4) == 0);
+    sh_set_output_gain(capture, 1, 0.5f);
+    sh_set_output_gain(capture, 3, 1.0f);
+    SHCapture *routed = sh_create(rate, 1, 4);
+    float *mix = malloc(ltc_encoder_get_buffersize(enc) * 4 * sizeof(float));
     unsigned char *buf = malloc(ltc_encoder_get_buffersize(enc));
     float *stereo = malloc(ltc_encoder_get_buffersize(enc) * 2 * sizeof(float));
     long long offset = 0;
@@ -38,9 +43,26 @@ static void check_rate(double rate, double fps, int df, int invert) {
             p += chunk;
         }
         offset += n;
+        sh_mix_outputs(capture, stereo, mix, n);
+        for (int j = 0; j < n; j++) {
+            assert(mix[j*4] == 0 && mix[j*4+2] == 0);
+            assert(mix[j*4+1] == stereo[j*2+1] * .5f);
+            assert(mix[j*4+3] == stereo[j*2+1]);
+        }
+        sh_feed(routed, mix, n, (double)(offset-n) / rate);
         expected_ends[f] = (double)offset / rate;
         SHFrame decoded[16];
         int count = sh_read(capture, decoded, 16);
+        SHFrame routed_frames[16];
+        int routed_count = sh_read(routed, routed_frames, 16);
+        assert(routed_count == count);
+        for (int k = 0; k < count; k++) {
+            assert(routed_frames[k].hours == decoded[k].hours);
+            assert(routed_frames[k].minutes == decoded[k].minutes);
+            assert(routed_frames[k].seconds == decoded[k].seconds);
+            assert(routed_frames[k].frames == decoded[k].frames);
+            assert(routed_frames[k].drop_frame == decoded[k].drop_frame);
+        }
         assert(sh_read(wrong, decoded + 8, 8) == 0);
         for (int k = 0; k < count; k++) {
             SHFrame d = decoded[k];
@@ -63,7 +85,31 @@ static void check_rate(double rate, double fps, int df, int invert) {
     assert(after_gap > 95);
     assert(sh_overflows(capture) == 0);
     printf("PASS %.0f Hz / %.5f FPS / DF=%d / inverted=%d: %d frames, mean %.5f, recovered after silence\n", rate, fps, df, invert, received, sum/received);
-    free(buf); free(stereo); sh_destroy(capture); sh_destroy(wrong); ltc_encoder_free(enc);
+    free(buf); free(stereo); free(mix); sh_destroy(routed); sh_destroy(capture); sh_destroy(wrong); ltc_encoder_free(enc);
+}
+static void mixer_test(void) {
+    SHCapture *c = sh_create(48000, 2, 3);
+    assert(sh_configure_outputs(c, 128) == 0);
+    float input[] = {0.9f, 0.8f, -0.5f, 0.2f, 0.3f, 0.75f};
+    float output[256];
+    sh_mix_outputs(c, input, output, 2);
+    for (int i = 0; i < 256; i++) assert(output[i] == 0);
+    for (int ch = 0; ch < 128; ch++) sh_set_output_gain(c, ch, ch / 127.0f);
+    sh_mix_outputs(c, input, output, 2);
+    for (int ch = 0; ch < 128; ch++) {
+        assert(output[ch] == -0.5f * (ch / 127.0f));
+        assert(output[128+ch] == 0.75f * (ch / 127.0f));
+    }
+    sh_set_output_gain(c, 0, NAN); sh_set_output_gain(c, 1, -1); sh_set_output_gain(c, 2, 10);
+    sh_set_output_gain(c, -1, 1); sh_set_output_gain(c, 128, 1);
+    sh_mix_outputs(c, input, output, 2);
+    assert(output[0] == 0 && output[1] == 0 && output[2] == -.5f);
+    input[2] = NAN; input[5] = INFINITY;
+    sh_mix_outputs(c, input, output, 2);
+    for (int i = 0; i < 256; i++) assert(output[i] == 0);
+    assert(sh_configure_outputs(c, 0) != 0);
+    sh_destroy(c);
+    puts("PASS routing: 128 outputs, physical order, independent gains, mute, gain bounds and non-finite samples");
 }
 static void noise_test(void) {
     SHCapture *c = sh_create(48000, 0, 1);
@@ -76,6 +122,7 @@ static void noise_test(void) {
     sh_destroy(c); puts("PASS deterministic noise is not accepted as LTC");
 }
 int main(void) {
+    mixer_test();
     check_rate(48000, 24, 0, 0);
     check_rate(48000, 24000.0/1001, 0, 0);
     check_rate(48000, 25, 0, 0);

@@ -9,6 +9,7 @@ struct InputDevice: Identifiable {
     let uid: String
     let channels: Int
     let rate: Double
+    let outputs: Int
 }
 
 final class Monitor: ObservableObject {
@@ -22,6 +23,31 @@ final class Monitor: ObservableObject {
     @Published var message = "Wybierz to samo wejście audio i kanał LTC co w Arenie."
     @Published var error = ""
     @Published var demo = false
+    @Published var routing = false
+    @Published var outputEnabled: [Bool] = []
+    @Published var outputLevels: [Double] = []
+    @Published var frozenHistory: History?
+    private var controlsUID = ""
+    var displayedHistory: History { frozenHistory ?? history }
+    func syncOutputControls() {
+        guard !running else { return }
+        let count = selected?.outputs ?? 0
+        if controlsUID != selected?.uid || outputEnabled.count != count {
+            controlsUID = selected?.uid ?? ""
+            outputEnabled = Array(repeating: false, count: count)
+            outputLevels = Array(repeating: 100, count: count)
+        }
+        if count == 0 { routing = false }
+    }
+    func applyOutput(_ index: Int) {
+        guard let capture, outputEnabled.indices.contains(index) else { return }
+        sh_set_output_gain(capture, Int32(index), outputEnabled[index] ? Float(outputLevels[index] / 100) : 0)
+    }
+    func muteAll() {
+        for i in outputEnabled.indices { outputEnabled[i] = false; applyOutput(i) }
+    }
+    func toggleHistoryFreeze() { frozenHistory = frozenHistory == nil ? history : nil }
+
     private var capture: OpaquePointer?
     private var timer: Timer?
     private var activity: NSObjectProtocol?
@@ -39,13 +65,14 @@ final class Monitor: ObservableObject {
             var name = d.name, uid = d.uid
             let n = withUnsafePointer(to: &name) { ptr in ptr.withMemoryRebound(to: CChar.self, capacity: 256) { String(cString: $0) } }
             let u = withUnsafePointer(to: &uid) { ptr in ptr.withMemoryRebound(to: CChar.self, capacity: 256) { String(cString: $0) } }
-            return InputDevice(id: d.id, name: n, uid: u, channels: Int(d.channels), rate: d.sample_rate)
+            return InputDevice(id: d.id, name: n, uid: u, channels: Int(d.channels), rate: d.sample_rate, outputs: Int(d.outputs))
         }
         let saved = UserDefaults.standard.string(forKey: "deviceUID")
         if !devices.contains(where: { $0.id == deviceID }) {
             deviceID = devices.first(where: { $0.uid == saved })?.id ?? devices.first?.id ?? 0
         }
         channel = min(max(1, channel), selected?.channels ?? 1)
+        syncOutputControls()
     }
     func start() {
         guard !running && !requesting else { return }
@@ -70,17 +97,27 @@ final class Monitor: ObservableObject {
         guard let c = sh_create(device.rate, Int32(channel - 1), Int32(device.channels)) else {
             error = "Nie udało się utworzyć dekodera LTC."; return
         }
-        let result = device.uid.withCString { sh_start(c, $0) }
+        var result: Int32
+        if routing {
+            result = sh_configure_outputs(c, Int32(device.outputs))
+            if result == 0 {
+                for i in outputEnabled.indices {
+                    sh_set_output_gain(c, Int32(i), outputEnabled[i] ? Float(outputLevels[i] / 100) : 0)
+                }
+                result = sh_start_duplex(c, device.id)
+            }
+        } else { result = device.uid.withCString { sh_start(c, $0) } }
         guard result == 0 else {
             sh_destroy(c)
             error = "Nie można otworzyć wejścia (CoreAudio: \(result)). Sprawdź podłączenie, uprawnienie mikrofonu i dostępność interfejsu dla kilku aplikacji."
             return
         }
         capture = c
+        frozenHistory = nil
         history.reset(at: sh_now(), threshold: Double(threshold) / 1000)
         demo = false; error = ""; running = true
         UserDefaults.standard.set(device.uid, forKey: "deviceUID")
-        message = "\(device.name) · kanał \(channel) · \(Int(device.rate)) Hz · odbiór LTC"
+        message = "\(device.name) · kanał \(channel) · \(Int(device.rate)) Hz · \(routing ? "ciągły odbiór i przekazywanie na wyjścia" : "odbiór LTC")"
         activity = ProcessInfo.processInfo.beginActivity(options: [.userInitiated, .idleSystemSleepDisabled], reason: "Monitorowanie wejścia LTC")
         let t = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in self?.poll() }
         timer = t
@@ -99,6 +136,10 @@ final class Monitor: ObservableObject {
     }
     private func poll() {
         guard let c = capture else { return }
+        if sh_validate_device(c) != 0 {
+            error = "Karta została odłączona lub zmieniła format/liczbę kanałów. Tor audio zatrzymany. Odśwież urządzenia i uruchom ponownie."
+            stop(); return
+        }
         drain()
         if sh_overflows(c) > 0 { error = "Przepełnienie bufora odbioru: \(sh_overflows(c)) ramek. Ta historia jest niepełna." }
         if sh_error(c) != 0 {
@@ -119,11 +160,11 @@ final class Monitor: ObservableObject {
         capture = nil; running = false
         if let activity { ProcessInfo.processInfo.endActivity(activity) }
         activity = nil
-        message = "Historia zatrzymana. Wejście audio zwolnione. Start rozpocznie nowy zapis."
+        message = "Tor audio zatrzymany, wejście i wyjścia zwolnione. Start rozpocznie nową sesję."
     }
     func exportCSV() {
         // Take the snapshot before the save panel opens; acquisition may continue.
-        let contents = history.csv
+        let contents = displayedHistory.csv
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.commaSeparatedText]
         let date = DateFormatter(); date.dateFormat = "yyyy-MM-dd_HH-mm-ss"
@@ -136,6 +177,7 @@ final class Monitor: ObservableObject {
     }
     func loadDemo() {
         if running { stop() }
+        frozenHistory = nil
         demo = true; error = ""
         history.reset(at: 0, threshold: 0.12)
         for n in 1...300 {
@@ -173,13 +215,16 @@ struct ContentView: View {
             header
             inputControls
             metrics
-            timeline
             actions
             messages
-            records
+            TabView {
+                VStack(alignment: .leading, spacing: 16) { timeline; records }
+                    .padding(.top, 10).tabItem { Text("Historia · 10 sekund") }
+                outputControls.padding(.top, 10).tabItem { Text("Wyjścia karty") }
+            }
             footnote
         }
-        .padding(24).frame(minWidth: 860, minHeight: 660).background(ink)
+        .padding(24).frame(minWidth: 940, minHeight: 730).background(ink)
         .preferredColorScheme(.dark)
     }
     @ViewBuilder private var header: some View {
@@ -217,7 +262,41 @@ struct ContentView: View {
                 }
                 Button("Odśwież") { model.refreshDevices() }
             }.disabled(model.running || model.requesting)
-            .onChange(of: model.deviceID) { _ in model.channel = 1 }
+            .onChange(of: model.deviceID) { _ in model.channel = 1; model.syncOutputControls() }
+    }
+
+    @ViewBuilder private var outputControls: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Toggle("Przekazuj LTC na wyjścia tej karty", isOn: $model.routing)
+                    .disabled(model.running || model.requesting || (model.selected?.outputs ?? 0) == 0)
+                Spacer()
+                Text("\(model.selected?.outputs ?? 0) wyjść").foregroundColor(.secondary)
+                Button("Wycisz wszystkie") { model.muteAll() }.disabled(!model.routing)
+            }
+            if model.routing {
+                ScrollView {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 260))], spacing: 10) {
+                        ForEach(model.outputEnabled.indices, id: \.self) { i in
+                            HStack(spacing: 8) {
+                                Toggle("OUT \(i + 1)", isOn: Binding(get: { model.outputEnabled[i] }, set: { model.outputEnabled[i] = $0; model.applyOutput(i) }))
+                                    .frame(width: 95)
+                                Slider(value: Binding(get: { model.outputLevels[i] }, set: { model.outputLevels[i] = $0; model.applyOutput(i) }), in: 0...100, step: 1)
+                                    .accessibilityLabel("Poziom wyjścia \(i + 1)")
+                                Text("\(Int(model.outputLevels[i]))%").monospacedDigit().frame(width: 42)
+                            }.padding(8).background(card).cornerRadius(6)
+                        }
+                    }
+                }.frame(maxHeight: .infinity)
+                .disabled(model.requesting)
+                Text("100% = poziom wejściowy. Wyłączone kanały wysyłają ciszę. Przekazywany jest cały dźwięk z wybranego wejścia LTC.")
+                    .font(.caption).foregroundColor(.secondary)
+            } else {
+                Text((model.selected?.outputs ?? 0) == 0 ? "To urządzenie nie udostępnia wyjść. Wybierz kartę z wejściem i wyjściami." : "Włącz przekazywanie przed Start. Następnie wybierz wyjścia i ich poziomy.")
+                    .font(.callout).foregroundColor(.secondary)
+                Spacer()
+            }
+        }
     }
 
     @ViewBuilder private var metrics: some View {
@@ -235,9 +314,9 @@ struct ContentView: View {
                     Spacer()
                     Text("zielony: LTC    czerwony: brak poprawnych ramek").font(.caption).foregroundColor(.secondary)
                 }
-                Timeline(history: model.history).frame(height: 43)
+                Timeline(history: model.displayedHistory).frame(height: 43)
                 HStack {
-                    Text("−10 s"); Spacer(); Text("−5 s"); Spacer(); Text(model.running ? "teraz" : "chwila zatrzymania")
+                    Text("−10 s"); Spacer(); Text("−5 s"); Spacer(); Text(model.running && model.frozenHistory == nil ? "teraz" : "chwila migawki")
                 }.font(.system(size: 11, design: .monospaced)).foregroundColor(.secondary)
             }
     }
@@ -245,19 +324,24 @@ struct ContentView: View {
     @ViewBuilder private var actions: some View {
             HStack(spacing: 10) {
                 Button { model.running ? model.stop() : model.start() } label: {
-                    Label(model.running ? "Stop · zachowaj historię" : "Start · nowy zapis", systemImage: model.running ? "stop.fill" : "play.fill")
+                    Label(model.running ? "Stop · wyłącz audio" : "Start · ciągły odbiór", systemImage: model.running ? "stop.fill" : "play.fill")
                         .frame(minWidth: 190)
                         .padding(.horizontal, 12).padding(.vertical, 8)
                         .foregroundColor(ink).background(mint).cornerRadius(7)
                 }.buttonStyle(.plain)
                     .disabled(model.requesting || (!model.running && model.selected == nil))
                 Button("Zapisz CSV") { model.exportCSV() }.disabled(model.history.frames.isEmpty && model.history.gaps.isEmpty)
+                Button(model.frozenHistory == nil ? "Zamroź historię" : "Wróć do live") { model.toggleHistoryFreeze() }
+                    .disabled(!model.running && model.frozenHistory == nil)
                 Spacer()
                 Button("Pokaż demo") { model.loadDemo() }.disabled(model.running || model.requesting)
             }
     }
 
     @ViewBuilder private var messages: some View {
+            if model.frozenHistory != nil && model.running {
+                Text("Historia zamrożona — odbiór i wyjścia audio nadal działają.").font(.caption).foregroundColor(mint)
+            }
             Text(model.message).font(.caption).foregroundColor(model.demo ? .orange : .secondary).lineLimit(2)
             if !model.error.isEmpty {
                 Text(model.error).font(.caption).foregroundColor(.orange).textSelection(.enabled)
@@ -268,8 +352,8 @@ struct ContentView: View {
             HStack(alignment: .top, spacing: 18) {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("RAMKI LTC").font(.system(size: 11, weight: .semibold)).foregroundColor(.secondary)
-                    Table(Array(model.history.frames.reversed()), selection: $selectedFrame) {
-                        TableColumn("Wiek [s]") { frame in Text(String(format: "%.3f", max(0, model.history.now - frame.time))).monospacedDigit() }.width(70)
+                    Table(Array(model.displayedHistory.frames.reversed()), selection: $selectedFrame) {
+                        TableColumn("Wiek [s]") { frame in Text(String(format: "%.3f", max(0, model.displayedHistory.now - frame.time))).monospacedDigit() }.width(70)
                         TableColumn("Timecode") { frame in Text(frame.timecode).font(.system(.body, design: .monospaced)) }.width(130)
                         TableColumn("FPS") { frame in Text(String(format: "%.3f", frame.fps)).monospacedDigit() }.width(65)
                         TableColumn("Format") { frame in Text("\(frame.dropFrame ? "DF" : "NDF")\(frame.reverse ? " ←" : "")") }.width(60)
@@ -279,13 +363,13 @@ struct ContentView: View {
                     Text("PRZERWY W ODBIORZE").font(.system(size: 11, weight: .semibold)).foregroundColor(.secondary)
                     ScrollView {
                         VStack(alignment: .leading, spacing: 12) {
-                            if model.history.gaps.isEmpty {
+                            if model.displayedHistory.gaps.isEmpty {
                                 Text("Brak wykrytych przerw").foregroundColor(.secondary).font(.callout)
                             }
-                            ForEach(model.history.gaps.reversed()) { gap in
+                            ForEach(model.displayedHistory.gaps.reversed()) { gap in
                                 VStack(alignment: .leading, spacing: 3) {
                                     Text(gap.initial ? "Brak LTC na początku" : "Zanik LTC").foregroundColor(.red).fontWeight(.medium)
-                                    Text(String(format: "%.2f s temu · %.0f ms%@", max(0, model.history.now - max(gap.start, model.history.cutoff)), max(0, min(gap.end ?? model.history.now, model.history.now) - max(gap.start, model.history.cutoff)) * 1000, gap.end == nil ? " · otwarty" : ""))
+                                    Text(String(format: "%.2f s temu · %.0f ms%@", max(0, model.displayedHistory.now - max(gap.start, model.displayedHistory.cutoff)), max(0, min(gap.end ?? model.displayedHistory.now, model.displayedHistory.now) - max(gap.start, model.displayedHistory.cutoff)) * 1000, gap.end == nil ? " · otwarty" : ""))
                                         .font(.system(size: 11, design: .monospaced)).foregroundColor(.secondary)
                                 }
                             }
@@ -352,7 +436,7 @@ struct SMPTEHistoryApp: App {
     var body: some Scene {
         Window("SMPTE History", id: "main") {
             ContentView(model: monitor).onAppear { delegate.monitor = monitor }
-        }.defaultSize(width: 940, height: 780)
+        }.defaultSize(width: 1040, height: 820)
         .commands {
             CommandGroup(replacing: .newItem) { }
         }

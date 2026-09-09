@@ -5,6 +5,7 @@ typedef struct SHCapture SHCapture;
 typedef struct {
     uint32_t id;
     int channels;
+    int outputs;
     double sample_rate;
     char name[256];
     char uid[256];
@@ -19,6 +20,12 @@ int sh_devices(SHDevice *out, int capacity);
 double sh_now(void);
 SHCapture *sh_create(double sample_rate, int channel, int channels);
 int sh_start(SHCapture *, const char *uid);
+// Configure before starting; one device clock for input and all outputs.
+int sh_configure_outputs(SHCapture *, int count);
+int sh_start_duplex(SHCapture *, uint32_t device_id);
+int sh_validate_device(SHCapture *);
+void sh_set_output_gain(SHCapture *, int channel, float gain);
+void sh_mix_outputs(SHCapture *, const float *input, float *output, int frames);
 void sh_stop(SHCapture *);
 void sh_destroy(SHCapture *);
 int sh_read(SHCapture *, SHFrame *out, int capacity);
