@@ -24,6 +24,8 @@ int sh_start(SHCapture *, const char *uid);
 int sh_configure_outputs(SHCapture *, int count);
 int sh_start_duplex(SHCapture *, uint32_t device_id);
 int sh_validate_device(SHCapture *);
+float sh_take_input_peak(SHCapture *);
+float sh_take_output_peak(SHCapture *, int channel);
 void sh_set_output_gain(SHCapture *, int channel, float gain);
 void sh_mix_outputs(SHCapture *, const float *input, float *output, int frames);
 void sh_stop(SHCapture *);

@@ -26,6 +26,8 @@ struct SHCapture {
     UInt32 max_frames;
     int outputs;
     _Atomic(float) *gains;
+    _Atomic(float) input_peak;
+    _Atomic(float) *output_peaks;
     AudioDeviceID route_device;
 };
 
@@ -95,12 +97,30 @@ SHCapture *sh_create(double rate, int channel, int channels) {
     s->decoder = ltc_decoder_create((int)(rate / 25), 64);
     if (!s->decoder) { free(s); return NULL; }
     pthread_mutex_init(&s->lock, NULL);
+    atomic_init(&s->input_peak, 0);
     atomic_init(&s->running, 0); atomic_init(&s->overflows, 0); atomic_init(&s->error, 0);
     return s;
+}
+static void retain_peak(_Atomic(float) *destination, float peak) {
+    float old = atomic_load_explicit(destination, memory_order_relaxed);
+    while (peak > old && !atomic_compare_exchange_weak_explicit(destination, &old, peak,
+        memory_order_relaxed, memory_order_relaxed)) {}
+}
+float sh_take_input_peak(SHCapture *s) {
+    return s ? atomic_exchange_explicit(&s->input_peak, 0, memory_order_relaxed) : 0;
+}
+float sh_take_output_peak(SHCapture *s, int ch) {
+    return s && ch >= 0 && ch < s->outputs ? atomic_exchange_explicit(&s->output_peaks[ch], 0, memory_order_relaxed) : 0;
 }
 void sh_feed(SHCapture *s, const float *samples, int count, double block_start) {
     // Fixed scratch buffer: no heap allocations in the audio callback.
     float mono[1024];
+    float peak = 0;
+    for (int i = 0; i < count; i++) {
+        float value = samples[i * s->channels + s->channel];
+        if (isfinite(value)) peak = fmaxf(peak, fabsf(value));
+    }
+    retain_peak(&s->input_peak, peak);
     for (int pos = 0; pos < count; ) {
         int n = count - pos; if (n > 1024) n = 1024;
         for (int j = 0; j < n; j++) mono[j] = samples[(pos + j) * s->channels + s->channel];
@@ -187,7 +207,7 @@ void sh_stop(SHCapture *s) {
 }
 void sh_destroy(SHCapture *s) {
     if (!s) return;
-    sh_stop(s); free(s->gains); ltc_decoder_free(s->decoder); pthread_mutex_destroy(&s->lock); free(s);
+    sh_stop(s); free(s->output_peaks); free(s->gains); ltc_decoder_free(s->decoder); pthread_mutex_destroy(&s->lock); free(s);
 }
 int sh_read(SHCapture *s, SHFrame *out, int capacity) {
     int n = 0;
@@ -204,9 +224,11 @@ double sh_last_audio(SHCapture *s) {
 int sh_configure_outputs(SHCapture *s, int count) {
     if (!s || atomic_load(&s->running) || count < 1) return -50;
     _Atomic(float) *gains = calloc((size_t)count, sizeof(*gains));
-    if (!gains) return -108;
-    for (int i = 0; i < count; i++) atomic_init(&gains[i], 0.0f);
-    free(s->gains); s->gains = gains; s->outputs = count;
+    _Atomic(float) *peaks = calloc((size_t)count, sizeof(*peaks));
+    if (!gains || !peaks) { free(gains); free(peaks); return -108; }
+    for (int i = 0; i < count; i++) { atomic_init(&gains[i], 0.0f); atomic_init(&peaks[i], 0.0f); }
+    free(s->gains); free(s->output_peaks);
+    s->gains = gains; s->output_peaks = peaks; s->outputs = count;
     return 0;
 }
 void sh_set_output_gain(SHCapture *s, int channel, float gain) {
@@ -219,11 +241,14 @@ void sh_mix_outputs(SHCapture *s, const float *input, float *output, int frames)
     // exactly zero. No allocations, timecode synthesis or UI dependency here.
     for (int ch = 0; ch < s->outputs; ch++) {
         const float gain = atomic_load_explicit(&s->gains[ch], memory_order_relaxed);
+        float peak = 0;
         for (int i = 0; i < frames; i++) {
             float value = input[i * s->channels + s->channel];
             if (!isfinite(value)) value = 0;
             output[i * s->outputs + ch] = fmaxf(-1, fminf(1, value)) * gain;
+            peak = fmaxf(peak, fabsf(output[i * s->outputs + ch]));
         }
+        retain_peak(&s->output_peaks[ch], peak);
     }
 }
 static OSStatus duplex_render(void *user, AudioUnitRenderActionFlags *flags,

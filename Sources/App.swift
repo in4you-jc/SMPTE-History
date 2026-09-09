@@ -26,6 +26,8 @@ final class Monitor: ObservableObject {
     @Published var routing = false
     @Published var outputEnabled: [Bool] = []
     @Published var outputLevels: [Double] = []
+    @Published var inputPeak: Float = 0
+    @Published var outputPeaks: [Float] = []
     @Published var frozenHistory: History?
     private var controlsUID = ""
     var displayedHistory: History { frozenHistory ?? history }
@@ -36,6 +38,7 @@ final class Monitor: ObservableObject {
             controlsUID = selected?.uid ?? ""
             outputEnabled = Array(repeating: false, count: count)
             outputLevels = Array(repeating: 100, count: count)
+            outputPeaks = Array(repeating: 0, count: count)
         }
         if count == 0 { routing = false }
     }
@@ -141,6 +144,8 @@ final class Monitor: ObservableObject {
             stop(); return
         }
         drain()
+        inputPeak = sh_take_input_peak(c)
+        outputPeaks = outputEnabled.indices.map { sh_take_output_peak(c, Int32($0)) }
         if sh_overflows(c) > 0 { error = "Przepełnienie bufora odbioru: \(sh_overflows(c)) ramek. Ta historia jest niepełna." }
         if sh_error(c) != 0 {
             error = "Błąd odbioru CoreAudio: \(sh_error(c)). Nasłuch został zatrzymany."; stop(); return
@@ -158,6 +163,7 @@ final class Monitor: ObservableObject {
             sh_destroy(c)
         }
         capture = nil; running = false
+        inputPeak = 0; outputPeaks = Array(repeating: 0, count: outputEnabled.count)
         if let activity { ProcessInfo.processInfo.endActivity(activity) }
         activity = nil
         message = "Tor audio zatrzymany, wejście i wyjścia zwolnione. Start rozpocznie nową sesję."
@@ -266,7 +272,9 @@ struct ContentView: View {
     }
 
     @ViewBuilder private var outputControls: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 12) {
+            LevelMeter(label: "INPUT · kanał \(model.channel)", peak: model.inputPeak)
+                .padding(12).background(card).cornerRadius(8)
             HStack {
                 Toggle("Przekazuj LTC na wyjścia tej karty", isOn: $model.routing)
                     .disabled(model.running || model.requesting || (model.selected?.outputs ?? 0) == 0)
@@ -278,18 +286,21 @@ struct ContentView: View {
                 ScrollView {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 260))], spacing: 10) {
                         ForEach(model.outputEnabled.indices, id: \.self) { i in
-                            HStack(spacing: 8) {
+                            VStack(alignment: .leading, spacing: 10) {
+                                HStack(spacing: 8) {
                                 Toggle("OUT \(i + 1)", isOn: Binding(get: { model.outputEnabled[i] }, set: { model.outputEnabled[i] = $0; model.applyOutput(i) }))
                                     .frame(width: 95)
                                 Slider(value: Binding(get: { model.outputLevels[i] }, set: { model.outputLevels[i] = $0; model.applyOutput(i) }), in: 0...100, step: 1)
                                     .accessibilityLabel("Poziom wyjścia \(i + 1)")
                                 Text("\(Int(model.outputLevels[i]))%").monospacedDigit().frame(width: 42)
+                                }
+                                LevelMeter(label: "OUT \(i + 1) · po regulacji", peak: model.outputPeaks.indices.contains(i) ? model.outputPeaks[i] : 0)
                             }.padding(8).background(card).cornerRadius(6)
                         }
                     }
                 }.frame(maxHeight: .infinity)
                 .disabled(model.requesting)
-                Text("100% = poziom wejściowy. Wyłączone kanały wysyłają ciszę. Przekazywany jest cały dźwięk z wybranego wejścia LTC.")
+                Text("Mierniki: szczyt sygnału cyfrowego w dBFS, odświeżanie 10 Hz. Wyjścia mierzone po regulacji i mute, przed kartą. 100% = poziom wejściowy.")
                     .font(.caption).foregroundColor(.secondary)
             } else {
                 Text((model.selected?.outputs ?? 0) == 0 ? "To urządzenie nie udostępnia wyjść. Wybierz kartę z wejściem i wyjściami." : "Włącz przekazywanie przed Start. Następnie wybierz wyjścia i ich poziomy.")
@@ -394,6 +405,35 @@ struct ContentView: View {
             Text(value).font(.system(size: 29, weight: .medium, design: .monospaced)).foregroundColor(.white).lineLimit(1)
         }.frame(minWidth: width, maxWidth: .infinity, alignment: .leading).padding(16)
             .background(card).cornerRadius(10)
+    }
+}
+
+struct LevelMeter: View {
+    let label: String
+    let peak: Float
+    private var db: Double { peak > 0 ? 20 * log10(Double(peak)) : -.infinity }
+    private var amount: Double { min(1, max(0, (db + 60) / 60)) }
+    private var value: String { peak > 0 ? String(format: "%.1f dBFS", db) : "−∞ dBFS" }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Text(label).font(.system(size: 10, weight: .semibold)).foregroundColor(.secondary)
+                Spacer()
+                Text(value).font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(peak >= 1 ? .red : .secondary)
+            }
+            GeometryReader { geometry in
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 3).fill(Color.black.opacity(0.4))
+                    LinearGradient(colors: [mint, .yellow, .red], startPoint: .leading, endPoint: .trailing)
+                        .mask(alignment: .leading) {
+                            Rectangle().frame(width: geometry.size.width * amount)
+                        }
+                }.clipShape(RoundedRectangle(cornerRadius: 3))
+            }.frame(height: 10)
+            HStack { Text("−60"); Spacer(); Text("−30"); Spacer(); Text("0 dBFS") }
+                .font(.system(size: 9, design: .monospaced)).foregroundColor(.secondary)
+        }.accessibilityElement(children: .ignore).accessibilityLabel("\(label): \(value)")
     }
 }
 

@@ -4,9 +4,9 @@ Natywny monitor wejściowego LTC/SMPTE do pracy obok Resolume Arena. Pokazuje ti
 
 ## Uruchomienie
 
-**Instalator PKG:** w [Releases](https://github.com/in4you-jc/SMPTE-History/releases/latest) dostępny jest też `SMPTE-History-1.1.0.pkg`. Otwórz go i przejdź przez instalator macOS. Umieści aplikację w `/Applications/SMPTE History.app`; może poprosić o hasło administratora. Przed aktualizacją zamknij działającą aplikację. Instalator nie uruchamia aplikacji ani nasłuchu automatycznie. Pakiet nie ma podpisu Developer ID Installer ani notaryzacji Apple.
+**Instalator PKG:** w [Releases](https://github.com/in4you-jc/SMPTE-History/releases/latest) dostępny jest też `SMPTE-History-1.1.1.pkg`. Otwórz go i przejdź przez instalator macOS. Umieści aplikację w `/Applications/SMPTE History.app`; może poprosić o hasło administratora. Przed aktualizacją zamknij działającą aplikację. Instalator nie uruchamia aplikacji ani nasłuchu automatycznie. Pakiet nie ma podpisu Developer ID Installer ani notaryzacji Apple.
 
-1. Pobierz plik **SMPTE-History-1.1.0.dmg** z [Releases](https://github.com/in4you-jc/SMPTE-History/releases/latest), otwórz go i przeciągnij **SMPTE History.app** na skrót **Applications**. Następnie uruchom aplikację z folderu Aplikacje. Nie potrzebujesz kodu źródłowego, Pythona ani dodatkowych bibliotek. Wymaga macOS 13 lub nowszego; zawiera wersje Apple Silicon i Intel. Alternatywnie w archiwum ZIP znajdziesz aplikację w `dist/SMPTE History.app`.
+1. Pobierz plik **SMPTE-History-1.1.1.dmg** z [Releases](https://github.com/in4you-jc/SMPTE-History/releases/latest), otwórz go i przeciągnij **SMPTE History.app** na skrót **Applications**. Następnie uruchom aplikację z folderu Aplikacje. Nie potrzebujesz kodu źródłowego, Pythona ani dodatkowych bibliotek. Wymaga macOS 13 lub nowszego; zawiera wersje Apple Silicon i Intel. Alternatywnie w archiwum ZIP znajdziesz aplikację w `dist/SMPTE History.app`.
 2. W Arenie sprawdź **Preferences → Audio → SMPTE**: urządzenie i numer kanału używanego przez SMPTE 1 lub SMPTE 2.
 3. W monitorze wybierz **to samo urządzenie oraz ten sam kanał**. Kanały są numerowane od 1. „Odśwież” odczytuje ponownie listę urządzeń.
 4. Pozostaw próg zaniku **120 ms** lub wybierz 80/200/500 ms. Kliknij **Start · ciągły odbiór**. Przy pierwszym uruchomieniu macOS poprosi o dostęp do mikrofonu — to uprawnienie obejmuje również wejścia interfejsów audio.
@@ -34,6 +34,12 @@ Dokumentacja REST API dołączona do Areny **7.23.2** (`rest/docs/swagger.yaml`)
 Urządzenie/sterownik musi pozwalać Arenie i monitorowi na jednoczesny odbiór. Aplikacja nie zmienia systemowego wejścia domyślnego ani nominalnej częstotliwości urządzenia. Gdy sterownik nie pozwala współdzielić wejścia, potrzebne będzie udostępnienie sygnału na drugim wejściu lub istniejący routing audio. Jednocześnie monitorowany jest jeden wybrany kanał.
 
 Gdy przekazywanie jest wyłączone, monitor nie otwiera wyjść audio. Używaj bezpośredniego kanału LTC, bez redukcji szumu, trybu izolacji głosu i innych procesorów. Sam napis „mikrofon” w uprawnieniach macOS nie oznacza, że należy używać mikrofonu laptopa.
+
+## Mierniki sygnału
+
+Zakładka **Wyjścia karty** pokazuje graficzny poziom INPUT wybranego kanału LTC (także w trybie samego nasłuchu) i osobny miernik każdego OUT. Mierniki pokazują maksymalną amplitudę próbek od poprzedniego odczytu, co około 100 ms, na skali −60…0 dBFS. Wartość liczbowa może być niższa niż −60 dBFS; cisza to −∞. Po Stop mierniki gasną. Zamrożenie historii nie zamraża mierników.
+
+OUT jest mierzony na próbkach po regulacji głośności i wyciszeniu, przed przekazaniem do sterownika karty. Nie jest to pomiar analogowego napięcia na gnieździe ani potwierdzenie odbioru LTC przez kolejne urządzenie. Przy mute miernik wyzeruje się po wygaśnięciu okna ostatniego pomiaru. Poziom dotyczy całego sygnału audio, nie tylko poprawnie rozpoznanego LTC.
 
 ## Przekazywanie LTC na wyjścia
 

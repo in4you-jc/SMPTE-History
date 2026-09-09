@@ -100,6 +100,15 @@ static void mixer_test(void) {
         assert(output[ch] == -0.5f * (ch / 127.0f));
         assert(output[128+ch] == 0.75f * (ch / 127.0f));
     }
+    sh_feed(c, input, 2, 0);
+    assert(sh_take_input_peak(c) == .75f);
+    assert(sh_take_input_peak(c) == 0);
+    for (int ch = 0; ch < 128; ch++) {
+        assert(sh_take_output_peak(c, ch) == .75f * (ch / 127.0f));
+        assert(sh_take_output_peak(c, ch) == 0);
+    }
+    assert(sh_take_output_peak(c, -1) == 0 && sh_take_output_peak(c, 128) == 0);
+    puts("PASS meters: selected input channel, 128 post-gain output peaks and reset after read");
     sh_set_output_gain(c, 0, NAN); sh_set_output_gain(c, 1, -1); sh_set_output_gain(c, 2, 10);
     sh_set_output_gain(c, -1, 1); sh_set_output_gain(c, 128, 1);
     sh_mix_outputs(c, input, output, 2);
